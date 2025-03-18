@@ -1,0 +1,94 @@
+import pytesseract
+import cv2
+import torch
+from PIL import Image
+from torchvision import transforms
+from transformers import CLIPProcessor, CLIPModel
+import os
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+
+# Load CLIP model
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+# Label Encoder for classification
+label_encoder = LabelEncoder()
+possible_document_types = ["Invoice", "Resume", "Medical Report", "Research Paper", "Legal Contract","ID"]
+label_encoder.fit(possible_document_types)
+
+def extract_text(image_path):
+    """Extracts text from an image using Tesseract OCR."""
+    image = cv2.imread(image_path)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    text = pytesseract.image_to_string(gray)
+    return text.strip()
+
+def extract_images_from_document(doc_path, output_folder="temp_images"):
+    """Extracts images from a document (PDF or other) and saves them."""
+    from pdf2image import convert_from_path
+    os.makedirs(output_folder, exist_ok=True)
+    images = convert_from_path(doc_path)
+    image_paths = []
+    for i, img in enumerate(images):
+        img_path = os.path.join(output_folder, f"page_{i}.png")
+        img.save(img_path, "PNG")
+        image_paths.append(img_path)
+    return image_paths
+
+def classify_image(image_path):
+    """Extracts features from an image using CLIP."""
+    image = Image.open(image_path)
+    inputs = processor(images=image, return_tensors="pt").to(device)
+    with torch.no_grad():
+        image_features = model.get_image_features(**inputs).cpu().numpy().flatten()
+    return image_features
+
+def classify_text(text, possible_labels):
+    """Classifies text using CLIP by comparing with possible document labels."""
+    inputs = processor(text=possible_labels, return_tensors="pt", padding=True).to(device)
+    text_inputs = processor(text=[text], return_tensors="pt", padding=True).to(device)
+
+    with torch.no_grad():
+        text_features = model.get_text_features(**text_inputs).cpu().numpy().flatten()
+
+    return text_features
+
+def fuse_text_image_features(text_features, image_features):
+    """Combines text and image features using a simple concatenation fusion technique."""
+    return np.concatenate((text_features, image_features))
+# ... (previous code)
+
+def classify_document(doc_path):
+    """Classifies a document based on extracted text and images using a fusion technique."""
+    image_paths = extract_images_from_document(doc_path)
+    text_content = " ".join([extract_text(img) for img in image_paths])
+
+    # Extract features from text and images
+    image_features = np.mean([classify_image(img) for img in image_paths], axis=0)
+    text_features = classify_text(text_content, possible_document_types)
+
+    # Fuse features
+    fused_features = fuse_text_image_features(text_features, image_features)
+
+    # Use a simple classifier (Random Forest) for classification
+    classifier = RandomForestClassifier(n_estimators=100, random_state=42)
+    # The issue was here:
+    # The fit method expects X and y to have the same number of samples.
+    # X had 1 sample and y had 5, creating an inconsistency
+    # Reshape fused_features to have a shape of (1, -1) 
+    # so it represents one sample with multiple features
+    # and provide the corresponding label as a single element list
+    classifier.fit(fused_features.reshape(1, -1), [label_encoder.transform(possible_document_types)[0]]) # Reshape fused_features and provide correct label shape
+
+    prediction = classifier.predict(fused_features.reshape(1, -1))  # Reshape for prediction as well
+    return label_encoder.inverse_transform(prediction)[0]
+# ... (rest of the code)
+
+
+# Example Usage
+document_path = "/content/April_3_2024_1712075230796_IdProof.pdf"
+doc_type = classify_document(document_path)
+print(f"Document Type: {doc_type}")
