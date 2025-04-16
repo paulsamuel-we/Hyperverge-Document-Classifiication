@@ -1,4 +1,4 @@
-#Download the dataset usingg this code
+#Download the dataset using this code
 
 ```
 import gdown
