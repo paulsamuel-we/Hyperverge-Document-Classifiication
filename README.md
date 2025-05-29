@@ -6,7 +6,7 @@ import zipfile
 import os
 
 # Google Drive file ID (Extracted from your link)
-file_id = "1YDen-ppG9RNTPHHWzuAc08Q-CpzbtObj"
+file_id = "1ofKeUIZBsinA_IoJGV74mza8yFBGDCJq"
 
 # Destination file name
 output = "file.zip"
